@@ -1,4 +1,4 @@
-# Vijay Spring Bars
+# Vijay Spring Bars & D son's Quartz
 
 Static ecommerce website for a watch spring bars manufacturer.
 
