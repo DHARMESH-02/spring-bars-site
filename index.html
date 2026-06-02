@@ -21,11 +21,12 @@
       </a>
       <nav class="nav" aria-label="Primary navigation">
         <a href="#products">Products</a>
+        <a href="#account">Account</a>
         <a href="#quality">Quality</a>
         <a href="#bulk">Bulk supply</a>
-        <a href="#quote">Quote</a>
+        <a href="#admin">Admin</a>
       </nav>
-      <a class="header-cta" href="#quote">Request quote</a>
+      <a class="header-cta" href="#account">Register</a>
     </header>
 
     <main id="top">
@@ -39,7 +40,7 @@
           </p>
           <div class="hero-actions">
             <a class="button primary" href="#products">Shop catalog</a>
-            <a class="button secondary" href="#quote">Bulk enquiry</a>
+            <a class="button secondary" href="#account">Create account</a>
           </div>
           <dl class="stats">
             <div><dt>8-24 mm</dt><dd>Lug widths</dd></div>
@@ -71,7 +72,7 @@
         <div class="section-heading">
           <p class="eyebrow">Ecommerce catalog</p>
           <h2>Spring bars ready for wholesale order</h2>
-          <p>Select a type, add items to enquiry, and send the list for pricing.</p>
+          <p>Select a type, add items to cart, register your account, and place a bulk order request.</p>
         </div>
 
         <div class="catalog-toolbar" aria-label="Product filters">
@@ -85,8 +86,8 @@
         <div class="product-layout">
           <div class="product-grid" id="productGrid" aria-live="polite"></div>
 
-          <aside class="quote-panel" aria-label="Quote enquiry cart">
-            <h3>Enquiry cart</h3>
+          <aside class="quote-panel" aria-label="Order cart">
+            <h3>Order cart</h3>
             <p class="muted">Build a buying list for MOQ and export pricing.</p>
             <div id="cartItems" class="cart-items">
               <p class="empty">No items added yet.</p>
@@ -95,8 +96,87 @@
               <span>Estimated pieces</span>
               <strong id="cartTotal">0</strong>
             </div>
-            <a class="button primary full" href="#quote">Send enquiry</a>
+            <a class="button primary full" href="#account">Continue to order</a>
           </aside>
+        </div>
+      </section>
+
+      <section class="section app-section" id="account">
+        <div class="section-heading">
+          <p class="eyebrow">Buyer account</p>
+          <h2>Register, verify email, and place your order.</h2>
+          <p>GitHub Pages cannot send real email by itself, so this demo shows the OTP on screen. The same flow can be connected to email delivery when a backend is added.</p>
+        </div>
+
+        <div class="app-grid">
+          <form class="account-card" id="registerForm">
+            <div class="card-heading">
+              <span class="step-badge">1</span>
+              <div>
+                <h3>Customer details</h3>
+                <p>Saved for order and admin records.</p>
+              </div>
+            </div>
+            <label>
+              Full name
+              <input type="text" name="name" placeholder="Buyer name" required />
+            </label>
+            <label>
+              Email
+              <input type="email" name="email" placeholder="buyer@example.com" required />
+            </label>
+            <label>
+              Contact number
+              <input type="tel" name="contact" placeholder="+91 98765 43210" required />
+            </label>
+            <label>
+              Delivery address
+              <textarea name="address" rows="4" placeholder="Shop, street, city, state, pincode" required></textarea>
+            </label>
+            <button class="button primary full" type="submit">Send OTP</button>
+          </form>
+
+          <form class="account-card" id="otpForm">
+            <div class="card-heading">
+              <span class="step-badge">2</span>
+              <div>
+                <h3>Email verification</h3>
+                <p>Enter the OTP to activate ordering.</p>
+              </div>
+            </div>
+            <div class="otp-preview" id="otpPreview">Register to generate OTP</div>
+            <label>
+              OTP
+              <input type="text" name="otp" maxlength="6" placeholder="6 digit OTP" required />
+            </label>
+            <button class="button primary full" type="submit">Verify email</button>
+            <p class="status-line" id="accountStatus">No verified customer yet.</p>
+          </form>
+
+          <form class="account-card order-card" id="orderForm">
+            <div class="card-heading">
+              <span class="step-badge">3</span>
+              <div>
+                <h3>Place order request</h3>
+                <p>Admin will see the cart, customer, and delivery details.</p>
+              </div>
+            </div>
+            <label>
+              Packing requirement
+              <select name="packing">
+                <option>Bulk poly pack</option>
+                <option>Dealer assortment box</option>
+                <option>Private label packet</option>
+                <option>Export carton packing</option>
+              </select>
+            </label>
+            <label>
+              Notes
+              <textarea name="notes" rows="4" placeholder="Mention sizes, finish, urgent dispatch, or custom needs."></textarea>
+            </label>
+            <button class="button primary full" type="submit">Place order</button>
+            <p class="status-line" id="orderStatus">Add products and verify email before ordering.</p>
+          </form>
         </div>
       </section>
 
@@ -140,40 +220,32 @@
         </div>
       </section>
 
-      <section class="section quote" id="quote">
+      <section class="section admin-section" id="admin">
         <div class="section-heading">
-          <p class="eyebrow">Fast buying conversation</p>
-          <h2>Request a manufacturing quote</h2>
-          <p>Share the sizes, quantity, packing style, and destination. The form is ready to connect to email or backend checkout later.</p>
+          <p class="eyebrow">Admin panel</p>
+          <h2>View customer orders and buyer details.</h2>
+          <p>Use this dashboard to review orders saved in this browser. For live business use, connect this panel to a database and protected admin login.</p>
         </div>
-        <form class="quote-form">
+        <form class="admin-login" id="adminLogin">
           <label>
-            Name
-            <input type="text" name="name" placeholder="Your name" />
+            Admin password
+            <input type="password" name="password" placeholder="Enter admin password" required />
           </label>
-          <label>
-            Company
-            <input type="text" name="company" placeholder="Company or shop name" />
-          </label>
-          <label>
-            Email or WhatsApp
-            <input type="text" name="contact" placeholder="sales@example.com" />
-          </label>
-          <label>
-            Order type
-            <select name="orderType">
-              <option>Wholesale spring bars</option>
-              <option>OEM watch assembly</option>
-              <option>Repair assortment boxes</option>
-              <option>Private label packing</option>
-            </select>
-          </label>
-          <label class="wide">
-            Requirements
-            <textarea name="requirements" rows="5" placeholder="Example: 18mm and 20mm double flange, 1.8mm diameter, 50,000 pieces each, export carton packing."></textarea>
-          </label>
-          <button class="button primary wide" type="submit">Prepare quote request</button>
+          <button class="button primary" type="submit">Open admin</button>
+          <span class="status-line">Demo password: admin123</span>
         </form>
+        <div class="admin-dashboard" id="adminDashboard" hidden>
+          <div class="admin-stats">
+            <div><span>Total orders</span><strong id="adminOrderCount">0</strong></div>
+            <div><span>Total pieces</span><strong id="adminPieceCount">0</strong></div>
+            <div><span>Customers</span><strong id="adminCustomerCount">0</strong></div>
+          </div>
+          <div class="admin-actions">
+            <button class="button secondary" id="exportOrders" type="button">Export orders</button>
+            <button class="button secondary" id="clearOrders" type="button">Clear demo data</button>
+          </div>
+          <div class="orders-list" id="ordersList"></div>
+        </div>
       </section>
     </main>
 
