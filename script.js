@@ -55,11 +55,15 @@ const products = [
   },
 ];
 
-const storageKeys = {
-  customer: "vijay.customer",
-  orders: "vijay.orders",
-  otp: "vijay.pendingOtp",
-};
+const config = window.VSB_CONFIG || {};
+const isConfigured =
+  config.SUPABASE_URL &&
+  config.SUPABASE_ANON_KEY &&
+  !config.SUPABASE_URL.includes("PASTE_") &&
+  !config.SUPABASE_ANON_KEY.includes("PASTE_");
+const supabaseClient = isConfigured
+  ? window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY)
+  : null;
 
 const grid = document.querySelector("#productGrid");
 const cartItems = document.querySelector("#cartItems");
@@ -72,25 +76,11 @@ const adminLogin = document.querySelector("#adminLogin");
 const adminDashboard = document.querySelector("#adminDashboard");
 const ordersList = document.querySelector("#ordersList");
 const cart = new Map();
-
-function readJson(key, fallback) {
-  try {
-    return JSON.parse(localStorage.getItem(key)) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
-}
+let currentUser = null;
+let currentProfile = null;
 
 function formatPieces(value) {
   return new Intl.NumberFormat("en-IN").format(value);
-}
-
-function getCustomer() {
-  return readJson(storageKeys.customer, null);
 }
 
 function setStatus(id, message, tone = "neutral") {
@@ -98,6 +88,13 @@ function setStatus(id, message, tone = "neutral") {
   if (!node) return;
   node.textContent = message;
   node.dataset.tone = tone;
+}
+
+function requireSupabase() {
+  if (supabaseClient) return true;
+  setStatus("#accountStatus", "Supabase is not configured yet. Add your project URL and anon key in config.js.", "error");
+  setStatus("#orderStatus", "Online backend setup is required before orders can be placed.", "error");
+  return false;
 }
 
 function renderProducts(activeFilter = "all") {
@@ -151,73 +148,123 @@ function renderCart() {
   cartTotal.textContent = formatPieces(total);
 }
 
-function renderAccountState() {
-  const customer = getCustomer();
-  if (!customer) {
-    setStatus("#accountStatus", "No verified customer yet.");
-    setStatus("#orderStatus", "Add products and verify email before ordering.");
+function fillProfileForm(profile) {
+  if (!profile) return;
+  registerForm.elements.name.value = profile.name || "";
+  registerForm.elements.email.value = profile.email || "";
+  registerForm.elements.contact.value = profile.contact || "";
+  registerForm.elements.address.value = profile.address || "";
+}
+
+async function loadSession() {
+  if (!supabaseClient) {
+    renderProducts();
+    renderCart();
+    requireSupabase();
     return;
   }
 
-  const verifiedText = customer.verified
-    ? `Verified: ${customer.name} (${customer.email})`
-    : `OTP sent to ${customer.email}. Verification pending.`;
-  setStatus("#accountStatus", verifiedText, customer.verified ? "success" : "warning");
-  setStatus(
-    "#orderStatus",
-    customer.verified ? "Ready to place an order after adding products." : "Verify email before ordering.",
-    customer.verified ? "success" : "warning"
-  );
+  const {
+    data: { session },
+  } = await supabaseClient.auth.getSession();
+  currentUser = session?.user || null;
 
-  registerForm.elements.name.value = customer.name || "";
-  registerForm.elements.email.value = customer.email || "";
-  registerForm.elements.contact.value = customer.contact || "";
-  registerForm.elements.address.value = customer.address || "";
+  if (!currentUser) {
+    setStatus("#accountStatus", "Enter your details and request email OTP.");
+    setStatus("#orderStatus", "Add products, verify email OTP, then place order.");
+    return;
+  }
+
+  const { data: profile, error } = await supabaseClient
+    .from("profiles")
+    .select("*")
+    .eq("id", currentUser.id)
+    .maybeSingle();
+
+  if (error) {
+    setStatus("#accountStatus", error.message, "error");
+    return;
+  }
+
+  currentProfile = profile;
+  fillProfileForm(profile);
+  setStatus("#accountStatus", `Signed in: ${currentUser.email}`, "success");
+  setStatus("#orderStatus", "Ready to place an online order after adding products.", "success");
 }
 
-function renderAdmin() {
-  const orders = readJson(storageKeys.orders, []);
-  const customers = new Set(orders.map((order) => order.customer.email));
-  const pieces = orders.reduce((sum, order) => sum + order.items.reduce((itemSum, item) => itemSum + item.qty, 0), 0);
+async function saveProfile(formData) {
+  const profile = {
+    id: currentUser.id,
+    email: currentUser.email,
+    name: formData.name.trim(),
+    contact: formData.contact.trim(),
+    address: formData.address.trim(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabaseClient.from("profiles").upsert(profile);
+  if (error) throw error;
+  currentProfile = profile;
+}
+
+async function renderAdmin() {
+  if (!supabaseClient) return;
+
+  const { data: orders, error } = await supabaseClient
+    .from("orders")
+    .select("id, created_at, status, packing, notes, items, profiles(name,email,contact,address)")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    ordersList.innerHTML = `<p class="empty">${error.message}</p>`;
+    return;
+  }
+
+  const customers = new Set(orders.map((order) => order.profiles?.email).filter(Boolean));
+  const pieces = orders.reduce(
+    (sum, order) => sum + (order.items || []).reduce((itemSum, item) => itemSum + Number(item.qty || 0), 0),
+    0
+  );
 
   document.querySelector("#adminOrderCount").textContent = orders.length;
   document.querySelector("#adminPieceCount").textContent = formatPieces(pieces);
   document.querySelector("#adminCustomerCount").textContent = customers.size;
 
   if (!orders.length) {
-    ordersList.innerHTML = '<p class="empty">No orders yet. Place a demo order from the customer area.</p>';
+    ordersList.innerHTML = '<p class="empty">No online orders yet.</p>';
     return;
   }
 
   ordersList.innerHTML = orders
-    .map(
-      (order) => `
-      <article class="order-row">
-        <div class="order-head">
-          <div>
-            <strong>${order.id}</strong>
-            <span>${new Date(order.createdAt).toLocaleString("en-IN")}</span>
+    .map((order) => {
+      const customer = order.profiles || {};
+      return `
+        <article class="order-row">
+          <div class="order-head">
+            <div>
+              <strong>${order.id}</strong>
+              <span>${new Date(order.created_at).toLocaleString("en-IN")}</span>
+            </div>
+            <span class="pill">${order.status}</span>
           </div>
-          <span class="pill">${order.status}</span>
-        </div>
-        <div class="order-detail-grid">
-          <div>
-            <h4>Customer</h4>
-            <p>${order.customer.name}</p>
-            <p>${order.customer.email}</p>
-            <p>${order.customer.contact}</p>
-            <p>${order.customer.address}</p>
+          <div class="order-detail-grid">
+            <div>
+              <h4>Customer</h4>
+              <p>${customer.name || ""}</p>
+              <p>${customer.email || ""}</p>
+              <p>${customer.contact || ""}</p>
+              <p>${customer.address || ""}</p>
+            </div>
+            <div>
+              <h4>Order</h4>
+              <p><strong>Packing:</strong> ${order.packing}</p>
+              <p><strong>Notes:</strong> ${order.notes || "No notes"}</p>
+              <ul>${(order.items || []).map((item) => `<li>${item.name}: ${formatPieces(item.qty)} pcs</li>`).join("")}</ul>
+            </div>
           </div>
-          <div>
-            <h4>Order</h4>
-            <p><strong>Packing:</strong> ${order.packing}</p>
-            <p><strong>Notes:</strong> ${order.notes || "No notes"}</p>
-            <ul>${order.items.map((item) => `<li>${item.name}: ${formatPieces(item.qty)} pcs</li>`).join("")}</ul>
-          </div>
-        </div>
-      </article>
-    `
-    )
+        </article>
+      `;
+    })
     .join("");
 }
 
@@ -246,87 +293,126 @@ grid.addEventListener("click", (event) => {
   });
 
   renderCart();
-  setStatus("#orderStatus", "Product added. Register and verify email to place the order.", "success");
+  setStatus("#orderStatus", "Product added. Verify email OTP to place the order.", "success");
 });
 
-registerForm.addEventListener("submit", (event) => {
+registerForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(registerForm));
-  const otp = String(Math.floor(100000 + Math.random() * 900000));
-  const customer = {
-    name: data.name.trim(),
-    email: data.email.trim(),
-    contact: data.contact.trim(),
-    address: data.address.trim(),
-    verified: false,
-  };
+  if (!requireSupabase()) return;
 
-  writeJson(storageKeys.customer, customer);
-  writeJson(storageKeys.otp, { email: customer.email, otp });
-  document.querySelector("#otpPreview").textContent = `Demo OTP: ${otp}`;
-  setStatus("#accountStatus", `OTP generated for ${customer.email}.`, "warning");
-  setStatus("#orderStatus", "Enter OTP to unlock ordering.", "warning");
-});
+  const formData = Object.fromEntries(new FormData(registerForm));
+  try {
+    const { error } = await supabaseClient.auth.signInWithOtp({
+      email: formData.email.trim(),
+      options: {
+        shouldCreateUser: true,
+        data: {
+          name: formData.name.trim(),
+          contact: formData.contact.trim(),
+          address: formData.address.trim(),
+        },
+      },
+    });
+    if (error) throw error;
 
-otpForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const pending = readJson(storageKeys.otp, null);
-  const customer = getCustomer();
-  const otp = new FormData(otpForm).get("otp").trim();
-
-  if (!pending || !customer || pending.email !== customer.email || pending.otp !== otp) {
-    setStatus("#accountStatus", "Incorrect OTP. Check the demo OTP and try again.", "error");
-    return;
+    sessionStorage.setItem("vsb.pendingProfile", JSON.stringify(formData));
+    document.querySelector("#otpPreview").textContent = `OTP sent to ${formData.email.trim()}`;
+    setStatus("#accountStatus", "Check email and enter the OTP.", "warning");
+  } catch (error) {
+    setStatus("#accountStatus", error.message, "error");
   }
-
-  customer.verified = true;
-  writeJson(storageKeys.customer, customer);
-  localStorage.removeItem(storageKeys.otp);
-  document.querySelector("#otpPreview").textContent = "Email verified";
-  otpForm.reset();
-  renderAccountState();
 });
 
-orderForm.addEventListener("submit", (event) => {
+otpForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const customer = getCustomer();
-  if (!customer?.verified) {
-    setStatus("#orderStatus", "Please verify email before placing order.", "error");
+  if (!requireSupabase()) return;
+
+  const otp = new FormData(otpForm).get("otp").trim();
+  const pendingProfile = JSON.parse(sessionStorage.getItem("vsb.pendingProfile") || "null");
+  const email = pendingProfile?.email || registerForm.elements.email.value;
+
+  try {
+    const { data, error } = await supabaseClient.auth.verifyOtp({
+      email: email.trim(),
+      token: otp,
+      type: "email",
+    });
+    if (error) throw error;
+
+    currentUser = data.user;
+    await saveProfile(pendingProfile || Object.fromEntries(new FormData(registerForm)));
+    sessionStorage.removeItem("vsb.pendingProfile");
+    document.querySelector("#otpPreview").textContent = "Email verified";
+    otpForm.reset();
+    setStatus("#accountStatus", `Verified and signed in: ${currentUser.email}`, "success");
+    setStatus("#orderStatus", "Ready to place an online order.", "success");
+  } catch (error) {
+    setStatus("#accountStatus", error.message, "error");
+  }
+});
+
+orderForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!requireSupabase()) return;
+
+  try {
+    const {
+      data: { user },
+    } = await supabaseClient.auth.getUser();
+    if (!user) {
+      setStatus("#orderStatus", "Please verify email before placing order.", "error");
+      location.hash = "#account";
+      return;
+    }
+    if (!cart.size) {
+      setStatus("#orderStatus", "Please add at least one product to cart.", "error");
+      location.hash = "#products";
+      return;
+    }
+
+    currentUser = user;
+    const profileData = Object.fromEntries(new FormData(registerForm));
+    await saveProfile(profileData);
+
+    const orderData = Object.fromEntries(new FormData(orderForm));
+    const { data: order, error } = await supabaseClient
+      .from("orders")
+      .insert({
+        user_id: user.id,
+        packing: orderData.packing,
+        notes: orderData.notes.trim(),
+        items: Array.from(cart.values()),
+        status: "New order",
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+
+    cart.clear();
+    renderCart();
+    orderForm.reset();
+    setStatus("#orderStatus", `Online order saved: ${order.id}`, "success");
+  } catch (error) {
+    setStatus("#orderStatus", error.message, "error");
+  }
+});
+
+adminLogin.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!requireSupabase()) return;
+
+  const {
+    data: { user },
+  } = await supabaseClient.auth.getUser();
+  if (!user) {
+    adminLogin.querySelector(".status-line").textContent = "Verify your admin email OTP first.";
+    adminLogin.querySelector(".status-line").dataset.tone = "error";
     location.hash = "#account";
     return;
   }
-  if (!cart.size) {
-    setStatus("#orderStatus", "Please add at least one product to cart.", "error");
-    location.hash = "#products";
-    return;
-  }
 
-  const data = Object.fromEntries(new FormData(orderForm));
-  const orders = readJson(storageKeys.orders, []);
-  const order = {
-    id: `VSB-${String(orders.length + 1).padStart(4, "0")}`,
-    createdAt: new Date().toISOString(),
-    status: "New order",
-    customer,
-    packing: data.packing,
-    notes: data.notes.trim(),
-    items: Array.from(cart.values()),
-  };
-
-  orders.unshift(order);
-  writeJson(storageKeys.orders, orders);
-  cart.clear();
-  renderCart();
-  orderForm.reset();
-  setStatus("#orderStatus", `Order ${order.id} placed. Admin can view it now.`, "success");
-  renderAdmin();
-});
-
-adminLogin.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const password = new FormData(adminLogin).get("password");
-  if (password !== "admin123") {
-    adminLogin.querySelector(".status-line").textContent = "Wrong password.";
+  if (!config.ADMIN_EMAILS?.includes(user.email)) {
+    adminLogin.querySelector(".status-line").textContent = "This email is not approved for admin access.";
     adminLogin.querySelector(".status-line").dataset.tone = "error";
     return;
   }
@@ -334,13 +420,20 @@ adminLogin.addEventListener("submit", (event) => {
   adminDashboard.hidden = false;
   adminLogin.querySelector(".status-line").textContent = "Admin panel open.";
   adminLogin.querySelector(".status-line").dataset.tone = "success";
-  renderAdmin();
+  await renderAdmin();
 });
 
-document.querySelector("#exportOrders").addEventListener("click", () => {
-  const orders = readJson(storageKeys.orders, []);
-  const payload = JSON.stringify(orders, null, 2);
-  navigator.clipboard?.writeText(payload);
+document.querySelector("#exportOrders").addEventListener("click", async () => {
+  if (!supabaseClient) return;
+  const { data: orders, error } = await supabaseClient
+    .from("orders")
+    .select("id, created_at, status, packing, notes, items, profiles(name,email,contact,address)")
+    .order("created_at", { ascending: false });
+  if (error) {
+    ordersList.innerHTML = `<p class="empty">${error.message}</p>`;
+    return;
+  }
+  await navigator.clipboard?.writeText(JSON.stringify(orders, null, 2));
   document.querySelector("#exportOrders").textContent = "Copied JSON";
   setTimeout(() => {
     document.querySelector("#exportOrders").textContent = "Export orders";
@@ -348,10 +441,9 @@ document.querySelector("#exportOrders").addEventListener("click", () => {
 });
 
 document.querySelector("#clearOrders").addEventListener("click", () => {
-  localStorage.removeItem(storageKeys.orders);
-  renderAdmin();
+  ordersList.innerHTML = '<p class="empty">For real online data, delete or update orders inside Supabase.</p>';
 });
 
 renderProducts();
 renderCart();
-renderAccountState();
+loadSession();

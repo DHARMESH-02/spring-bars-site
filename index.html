@@ -105,7 +105,7 @@
         <div class="section-heading">
           <p class="eyebrow">Buyer account</p>
           <h2>Register, verify email, and place your order.</h2>
-          <p>GitHub Pages cannot send real email by itself, so this demo shows the OTP on screen. The same flow can be connected to email delivery when a backend is added.</p>
+          <p>Customers receive an email OTP, verify their account, and submit orders into your online database.</p>
         </div>
 
         <div class="app-grid">
@@ -144,7 +144,7 @@
                 <p>Enter the OTP to activate ordering.</p>
               </div>
             </div>
-            <div class="otp-preview" id="otpPreview">Register to generate OTP</div>
+            <div class="otp-preview" id="otpPreview">OTP will arrive by email</div>
             <label>
               OTP
               <input type="text" name="otp" maxlength="6" placeholder="6 digit OTP" required />
@@ -224,15 +224,11 @@
         <div class="section-heading">
           <p class="eyebrow">Admin panel</p>
           <h2>View customer orders and buyer details.</h2>
-          <p>Use this dashboard to review orders saved in this browser. For live business use, connect this panel to a database and protected admin login.</p>
+          <p>Admin users can review online orders, customer addresses, contact details, and ordered items.</p>
         </div>
         <form class="admin-login" id="adminLogin">
-          <label>
-            Admin password
-            <input type="password" name="password" placeholder="Enter admin password" required />
-          </label>
-          <button class="button primary" type="submit">Open admin</button>
-          <span class="status-line">Demo password: admin123</span>
+          <span class="status-line">Sign in with an approved admin email, then open the panel.</span>
+          <button class="button primary" type="submit">Open admin panel</button>
         </form>
         <div class="admin-dashboard" id="adminDashboard" hidden>
           <div class="admin-stats">
@@ -257,6 +253,8 @@
       <a href="#top">Back to top</a>
     </footer>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
     <script src="script.js"></script>
   </body>
 </html>
