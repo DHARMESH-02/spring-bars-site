@@ -58,14 +58,12 @@ const products = [
 const config = window.VSB_CONFIG || {};
 const useCustomOtp = typeof config.OTP_ENDPOINT === "string" && config.OTP_ENDPOINT.trim() !== "";
 const otpEndpoint = useCustomOtp ? config.OTP_ENDPOINT.trim() : null;
-const isConfigured =
-  config.SUPABASE_URL &&
-  config.SUPABASE_ANON_KEY &&
-  !config.SUPABASE_URL.includes("PASTE_") &&
-  !config.SUPABASE_ANON_KEY.includes("PASTE_");
-const supabaseClient = isConfigured
-  ? window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY)
-  : null;
+const backendEndpoint =
+  typeof config.BACKEND_ENDPOINT === "string" && config.BACKEND_ENDPOINT.trim() !== ""
+    ? config.BACKEND_ENDPOINT.trim()
+    : null;
+const useBackend = !!backendEndpoint;
+const adminEmails = Array.isArray(config.ADMIN_EMAILS) ? config.ADMIN_EMAILS : [];
 
 async function postJson(url, body) {
   const response = await fetch(url, {
@@ -79,7 +77,18 @@ async function postJson(url, body) {
   return response.json();
 }
 
+async function runBackendAction(action, data = {}) {
+  if (!backendEndpoint) {
+    throw new Error("Backend endpoint is not configured.");
+  }
+  const result = await postJson(backendEndpoint, { action, ...data });
+  return result;
+}
+
 async function sendOtpViaPhp(formData) {
+  if (!otpEndpoint) {
+    throw new Error("OTP endpoint is not configured.");
+  }
   const { email, name } = formData;
   const result = await postJson(otpEndpoint, {
     action: "send",
@@ -92,6 +101,9 @@ async function sendOtpViaPhp(formData) {
 }
 
 async function verifyOtpViaPhp(email, otp) {
+  if (!otpEndpoint) {
+    throw new Error("OTP endpoint is not configured.");
+  }
   const result = await postJson(otpEndpoint, {
     action: "verify",
     email: email.trim(),
@@ -100,6 +112,13 @@ async function verifyOtpViaPhp(email, otp) {
   if (!result.success) {
     throw new Error(result.message || "OTP verification failed.");
   }
+}
+
+function requireBackend() {
+  if (useBackend) return true;
+  setStatus("#accountStatus", "Backend is not configured yet. Add BACKEND_ENDPOINT in config.js.", "error");
+  setStatus("#orderStatus", "Online backend setup is required before orders can be placed.", "error");
+  return false;
 }
 
 const grid = document.querySelector("#productGrid");
@@ -127,9 +146,9 @@ function setStatus(id, message, tone = "neutral") {
   node.dataset.tone = tone;
 }
 
-function requireSupabase() {
-  if (supabaseClient) return true;
-  setStatus("#accountStatus", "Supabase is not configured yet. Add your project URL and anon key in config.js.", "error");
+function requireBackend() {
+  if (useBackend) return true;
+  setStatus("#accountStatus", "Backend is not configured yet. Add BACKEND_ENDPOINT in config.js.", "error");
   setStatus("#orderStatus", "Online backend setup is required before orders can be placed.", "error");
   return false;
 }
@@ -194,70 +213,66 @@ function fillProfileForm(profile) {
 }
 
 async function loadSession() {
-  if (!supabaseClient) {
-    renderProducts();
-    renderCart();
-    requireSupabase();
+  renderProducts();
+  renderCart();
+
+  if (!useBackend) {
+    setStatus("#accountStatus", "Backend is not configured. Add BACKEND_ENDPOINT in config.js.", "error");
+    setStatus("#orderStatus", "Online backend setup is required before orders can be placed.", "error");
     return;
   }
 
-  const {
-    data: { session },
-  } = await supabaseClient.auth.getSession();
-  currentUser = session?.user || null;
+  try {
+    const result = await runBackendAction("load_session");
+    if (!result.success) throw new Error(result.message || "Unable to load session.");
 
-  if (!currentUser) {
-    setStatus("#accountStatus", "Enter your details and request email OTP.");
-    setStatus("#orderStatus", "Add products, verify email OTP, then place order.");
-    return;
-  }
+    currentUser = result.data?.user || null;
+    currentProfile = result.data?.profile || null;
+    fillProfileForm(currentProfile);
 
-  const { data: profile, error } = await supabaseClient
-    .from("profiles")
-    .select("*")
-    .eq("id", currentUser.id)
-    .maybeSingle();
+    if (!currentUser) {
+      setStatus("#accountStatus", "Enter your details and request email OTP.");
+      setStatus("#orderStatus", "Add products, verify email OTP, then place order.");
+      return;
+    }
 
-  if (error) {
+    setStatus("#accountStatus", `Signed in: ${currentUser.email}", "success");
+    setStatus("#orderStatus", "Ready to place an online order after adding products.", "success");
+  } catch (error) {
     setStatus("#accountStatus", error.message, "error");
-    return;
   }
-
-  currentProfile = profile;
-  fillProfileForm(profile);
-  setStatus("#accountStatus", `Signed in: ${currentUser.email}`, "success");
-  setStatus("#orderStatus", "Ready to place an online order after adding products.", "success");
 }
 
 async function saveProfile(formData) {
+  if (!useBackend) {
+    throw new Error("Backend is not configured.");
+  }
+
+  const email = currentUser?.email?.trim() || formData.email.trim();
   const profile = {
-    id: currentUser.id,
-    email: currentUser.email,
+    email,
     name: formData.name.trim(),
     contact: formData.contact.trim(),
     address: formData.address.trim(),
     updated_at: new Date().toISOString(),
   };
 
-  const { error } = await supabaseClient.from("profiles").upsert(profile);
-  if (error) throw error;
+  const result = await runBackendAction("save_profile", profile);
+  if (!result.success) throw new Error(result.message || "Unable to save profile.");
   currentProfile = profile;
 }
 
 async function renderAdmin() {
-  if (!supabaseClient) return;
+  if (!useBackend) return;
 
-  const { data: orders, error } = await supabaseClient
-    .from("orders")
-    .select("id, created_at, status, packing, notes, items, profiles(name,email,contact,address)")
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    ordersList.innerHTML = `<p class="empty">${error.message}</p>`;
+  const result = await runBackendAction("get_orders");
+  if (!result.success) {
+    ordersList.innerHTML = `<p class="empty">${result.message}</p>`;
     return;
   }
 
-  const customers = new Set(orders.map((order) => order.profiles?.email).filter(Boolean));
+  const orders = result.data?.orders || [];
+  const customers = new Set(orders.map((order) => order.profile?.email).filter(Boolean));
   const pieces = orders.reduce(
     (sum, order) => sum + (order.items || []).reduce((itemSum, item) => itemSum + Number(item.qty || 0), 0),
     0
@@ -274,7 +289,7 @@ async function renderAdmin() {
 
   ordersList.innerHTML = orders
     .map((order) => {
-      const customer = order.profiles || {};
+      const customer = order.profile || {};
       return `
         <article class="order-row">
           <div class="order-head">
@@ -349,25 +364,19 @@ registerForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  if (!requireSupabase()) return;
+  if (!requireBackend()) return;
 
-  const formDataSupabase = formData;
   try {
-    const { error } = await supabaseClient.auth.signInWithOtp({
-      email: formDataSupabase.email.trim(),
-      options: {
-        shouldCreateUser: true,
-        data: {
-          name: formDataSupabase.name.trim(),
-          contact: formDataSupabase.contact.trim(),
-          address: formDataSupabase.address.trim(),
-        },
-      },
+    const result = await runBackendAction("send_otp", {
+      email: formData.email.trim(),
+      name: formData.name.trim(),
+      contact: formData.contact.trim(),
+      address: formData.address.trim(),
     });
-    if (error) throw error;
+    if (!result.success) throw new Error(result.message || "Failed to send OTP email.");
 
-    sessionStorage.setItem("vsb.pendingProfile", JSON.stringify(formDataSupabase));
-    document.querySelector("#otpPreview").textContent = `OTP sent to ${formDataSupabase.email.trim()}`;
+    sessionStorage.setItem("vsb.pendingProfile", JSON.stringify(formData));
+    document.querySelector("#otpPreview").textContent = `OTP sent to ${formData.email.trim()}`;
     setStatus("#accountStatus", "Check email and enter the OTP.", "warning");
   } catch (error) {
     setStatus("#accountStatus", error.message, "error");
@@ -400,17 +409,16 @@ otpForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  if (!requireSupabase()) return;
+  if (!requireBackend()) return;
 
   try {
-    const { data, error } = await supabaseClient.auth.verifyOtp({
+    const result = await runBackendAction("verify_otp", {
       email: email.trim(),
-      token: otp,
-      type: "email",
+      otp,
     });
     if (error) throw error;
 
-    currentUser = data.user;
+    currentUser = user;
     await saveProfile(pendingProfile || Object.fromEntries(new FormData(registerForm)));
     sessionStorage.removeItem("vsb.pendingProfile");
     document.querySelector("#otpPreview").textContent = "Email verified";

@@ -1,6 +1,11 @@
 window.VSB_CONFIG = {
-  SUPABASE_URL: "PASTE_SUPABASE_PROJECT_URL_HERE",
-  SUPABASE_ANON_KEY: "PASTE_SUPABASE_ANON_KEY_HERE",
-  ADMIN_EMAILS: ["your-admin-email@example.com"],
+  // Supabase Project Settings > API > Project URL and anon public key
+  // Example:
+  // SUPABASE_URL: "https://xxxxxxx.supabase.co",
+  // SUPABASE_ANON_KEY: "eyJhbGciOiJI...",
+  SUPABASE_URL: "",
+  SUPABASE_ANON_KEY: "",
+
+  ADMIN_EMAILS: ["dharmeshdabhi455@gmail.com"],
   OTP_ENDPOINT: "/otp.php",
 };
