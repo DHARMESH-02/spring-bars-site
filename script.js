@@ -56,6 +56,8 @@ const products = [
 ];
 
 const config = window.VSB_CONFIG || {};
+const useCustomOtp = typeof config.OTP_ENDPOINT === "string" && config.OTP_ENDPOINT.trim() !== "";
+const otpEndpoint = useCustomOtp ? config.OTP_ENDPOINT.trim() : null;
 const isConfigured =
   config.SUPABASE_URL &&
   config.SUPABASE_ANON_KEY &&
@@ -64,6 +66,41 @@ const isConfigured =
 const supabaseClient = isConfigured
   ? window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY)
   : null;
+
+async function postJson(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    credentials: "same-origin",
+  });
+  return response.json();
+}
+
+async function sendOtpViaPhp(formData) {
+  const { email, name } = formData;
+  const result = await postJson(otpEndpoint, {
+    action: "send",
+    email: email.trim(),
+    name: name.trim(),
+  });
+  if (!result.success) {
+    throw new Error(result.message || "Failed to send OTP email.");
+  }
+}
+
+async function verifyOtpViaPhp(email, otp) {
+  const result = await postJson(otpEndpoint, {
+    action: "verify",
+    email: email.trim(),
+    otp: otp.trim(),
+  });
+  if (!result.success) {
+    throw new Error(result.message || "OTP verification failed.");
+  }
+}
 
 const grid = document.querySelector("#productGrid");
 const cartItems = document.querySelector("#cartItems");
@@ -298,25 +335,39 @@ grid.addEventListener("click", (event) => {
 
 registerForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const formData = Object.fromEntries(new FormData(registerForm));
+
+  if (useCustomOtp) {
+    try {
+      await sendOtpViaPhp(formData);
+      sessionStorage.setItem("vsb.pendingProfile", JSON.stringify(formData));
+      document.querySelector("#otpPreview").textContent = `OTP sent to ${formData.email.trim()}`;
+      setStatus("#accountStatus", "Check email and enter the OTP.", "warning");
+    } catch (error) {
+      setStatus("#accountStatus", error.message, "error");
+    }
+    return;
+  }
+
   if (!requireSupabase()) return;
 
-  const formData = Object.fromEntries(new FormData(registerForm));
+  const formDataSupabase = formData;
   try {
     const { error } = await supabaseClient.auth.signInWithOtp({
-      email: formData.email.trim(),
+      email: formDataSupabase.email.trim(),
       options: {
         shouldCreateUser: true,
         data: {
-          name: formData.name.trim(),
-          contact: formData.contact.trim(),
-          address: formData.address.trim(),
+          name: formDataSupabase.name.trim(),
+          contact: formDataSupabase.contact.trim(),
+          address: formDataSupabase.address.trim(),
         },
       },
     });
     if (error) throw error;
 
-    sessionStorage.setItem("vsb.pendingProfile", JSON.stringify(formData));
-    document.querySelector("#otpPreview").textContent = `OTP sent to ${formData.email.trim()}`;
+    sessionStorage.setItem("vsb.pendingProfile", JSON.stringify(formDataSupabase));
+    document.querySelector("#otpPreview").textContent = `OTP sent to ${formDataSupabase.email.trim()}`;
     setStatus("#accountStatus", "Check email and enter the OTP.", "warning");
   } catch (error) {
     setStatus("#accountStatus", error.message, "error");
@@ -325,11 +376,31 @@ registerForm.addEventListener("submit", async (event) => {
 
 otpForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!requireSupabase()) return;
-
   const otp = new FormData(otpForm).get("otp").trim();
   const pendingProfile = JSON.parse(sessionStorage.getItem("vsb.pendingProfile") || "null");
   const email = pendingProfile?.email || registerForm.elements.email.value;
+
+  if (useCustomOtp) {
+    try {
+      await verifyOtpViaPhp(email, otp);
+      currentUser = { email: email.trim() };
+      currentProfile = pendingProfile || {
+        email: email.trim(),
+        name: registerForm.elements.name.value.trim(),
+        contact: registerForm.elements.contact.value.trim(),
+        address: registerForm.elements.address.value.trim(),
+      };
+      document.querySelector("#otpPreview").textContent = "Email verified";
+      otpForm.reset();
+      setStatus("#accountStatus", `Verified and signed in: ${currentUser.email}`, "success");
+      setStatus("#orderStatus", "Ready to place an online order.", "success");
+    } catch (error) {
+      setStatus("#accountStatus", error.message, "error");
+    }
+    return;
+  }
+
+  if (!requireSupabase()) return;
 
   try {
     const { data, error } = await supabaseClient.auth.verifyOtp({
